@@ -12,8 +12,8 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let rows = 50;
-        let cols = 50;
+        let rows = 150;
+        let cols = 150;
         let game = GameOfLife::new(rows, cols);
         let camera = Camera::new();
 
@@ -46,6 +46,19 @@ impl App {
 
                 ui.painter().rect_filled(rect, 0.0, color);
             }
+        }
+    }
+
+    // Center the grid in the available space if the camera offset is untouched
+    fn center_grid_if_needed(&mut self, ui: &egui::Ui) {
+        let grid_width = self.game.cols as f32 * self.cell_size * self.camera.zoom;
+        let grid_height = self.game.rows as f32 * self.cell_size * self.camera.zoom;
+        let avail = ui.available_size();
+        if self.camera.offset == egui::Vec2::ZERO {
+            self.camera.offset = egui::vec2(
+                (avail.x - grid_width) / 2.0,
+                (avail.y - grid_height) / 2.0,
+            );
         }
     }
 
@@ -86,6 +99,8 @@ impl eframe::App for App {
 
         // Central panel for the game grid
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.center_grid_if_needed(ui);
+
             // Handle panning
             self.camera.handle_pan(ui);
 
