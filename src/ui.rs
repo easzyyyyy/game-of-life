@@ -8,12 +8,14 @@ pub struct App {
     game: GameOfLife,
     camera: Camera,
     cell_size: f32,
+    last_camera_offset: egui::Vec2,
+    last_camera_zoom: f32,
 }
 
 impl App {
     pub fn new() -> Self {
-        let rows = 150;
-        let cols = 150;
+        let rows = 1000;
+        let cols = 1000;
         let game = GameOfLife::new(rows, cols);
         let camera = Camera::new();
 
@@ -21,30 +23,51 @@ impl App {
             game,
             camera,
             cell_size: 15.0,
+            last_camera_offset: egui::Vec2::ZERO,
+            last_camera_zoom: 1.0,
         }
     }
 
     // Render the grid of cells
     fn render_grid(&self, ui: &egui::Ui) {
         let scaled_cell_size = self.camera.scaled_cell_size(self.cell_size);
+        let visible_rect = ui.clip_rect();
 
-        for row in 0..self.game.rows {
-            for col in 0..self.game.cols {
-                let is_alive = self.game.is_alive(row, col);
+        // Draw black background for the entire visible grid area (optimization: single draw call)
+        let grid_width = self.game.cols as f32 * scaled_cell_size;
+        let grid_height = self.game.rows as f32 * scaled_cell_size;
+        let grid_rect = egui::Rect::from_min_size(
+            self.camera.grid_to_screen(0, 0, self.cell_size),
+            egui::vec2(grid_width, grid_height),
+        );
+        ui.painter().rect_filled(grid_rect, 0.0, egui::Color32::BLACK);
 
-                let color = if is_alive {
-                    egui::Color32::WHITE
-                } else {
-                    egui::Color32::BLACK
-                };
+        // Calculate which cells are visible on screen (culling optimization)
+        let start_col = ((visible_rect.min.x - self.camera.offset.x) / scaled_cell_size)
+            .floor()
+            .max(0.0) as usize;
+        let end_col = ((visible_rect.max.x - self.camera.offset.x) / scaled_cell_size)
+            .ceil()
+            .min(self.game.cols as f32) as usize;
+        let start_row = ((visible_rect.min.y - self.camera.offset.y) / scaled_cell_size)
+            .floor()
+            .max(0.0) as usize;
+        let end_row = ((visible_rect.max.y - self.camera.offset.y) / scaled_cell_size)
+            .ceil()
+            .min(self.game.rows as f32) as usize;
 
-                let pos = self.camera.grid_to_screen(row, col, self.cell_size);
-                let rect = egui::Rect::from_min_size(
-                    pos,
-                    egui::vec2(scaled_cell_size, scaled_cell_size),
-                );
+        // Only render alive cells (optimization: skip dead cells)
+        for row in start_row..end_row {
+            for col in start_col..end_col {
+                if self.game.is_alive(row, col) {
+                    let pos = self.camera.grid_to_screen(row, col, self.cell_size);
+                    let rect = egui::Rect::from_min_size(
+                        pos,
+                        egui::vec2(scaled_cell_size, scaled_cell_size),
+                    );
 
-                ui.painter().rect_filled(rect, 0.0, color);
+                    ui.painter().rect_filled(rect, 0.0, egui::Color32::WHITE);
+                }
             }
         }
     }
@@ -88,10 +111,35 @@ impl App {
             ui.label(format!("Zoom: {:.1}x", self.camera.zoom));
         });
     }
+
+    // Render stats (FPS, etc.) in the top-right corner
+    fn render_stats(&self, ctx: &egui::Context) {
+        egui::Area::new(egui::Id::new("fps_display"))
+            .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])
+            .show(ctx, |ui| {
+                let fps = 1.0 / ctx.input(|i| i.stable_dt.max(0.001));
+                ui.allocate_ui(egui::vec2(120.0, 24.0), |ui| {
+                    ui.label(format!("{:.0} FPS", fps));
+                });
+            });
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Lazy rendering: only repaint when something changes
+        let camera_changed = self.camera.offset != self.last_camera_offset
+            || self.camera.zoom != self.last_camera_zoom;
+
+        if camera_changed {
+            self.last_camera_offset = self.camera.offset;
+            self.last_camera_zoom = self.camera.zoom;
+            ctx.request_repaint();
+        }
+
+        // Render stats (FPS)
+        self.render_stats(ctx);
+
         // Top panel for controls
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
             self.render_controls(ui);

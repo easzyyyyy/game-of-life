@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 // The main struct representing the Game of Life state
 pub struct GameOfLife {
     pub grid: Vec<Vec<bool>>, // 2D grid of cells (true = alive, false = dead)
@@ -64,21 +66,24 @@ impl GameOfLife {
     // Calculate the next generation based on Conway's rules
     #[allow(clippy::needless_range_loop)]
     pub fn next_generation(&mut self) {
-        let mut new_grid = self.grid.clone();
+        let new_grid: Vec<Vec<bool>> = (0..self.rows)
+            .into_par_iter()
+            .map(|row| {
+                (0..self.cols)
+                    .map(|col| {
+                        let neighbors = self.count_neighbors(row, col);
+                        let is_alive = self.grid[row][col];
 
-        for row in 0..self.rows {
-            for col in 0..self.cols {
-                let neighbors = self.count_neighbors(row, col);
-                let is_alive = self.grid[row][col];
-
-                // Apply Conway's rules
-                new_grid[row][col] = match (is_alive, neighbors) {
-                    (true, 2) | (true, 3) => true, // Survival
-                    (false, 3) => true,            // Birth
-                    _ => false,                    // Death or stays dead
-                };
-            }
-        }
+                        // Apply Conway's rules
+                        match (is_alive, neighbors) {
+                            (true, 2) | (true, 3) => true, // Survival
+                            (false, 3) => true,            // Birth
+                            _ => false,                    // Death or stays dead
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
 
         self.grid = new_grid;
     }
