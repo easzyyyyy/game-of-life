@@ -10,6 +10,11 @@ pub struct App {
     cell_size: f32,
     last_camera_offset: egui::Vec2,
     last_camera_zoom: f32,
+    is_playing: bool,
+    speed: f32,
+    generation_count: usize,
+    time_accumulator: f32,
+    grid_history: Vec<Vec<Vec<bool>>>,
 }
 
 impl App {
@@ -25,6 +30,11 @@ impl App {
             cell_size: 15.0,
             last_camera_offset: egui::Vec2::ZERO,
             last_camera_zoom: 1.0,
+            is_playing: false,
+            speed: 5.0,
+            generation_count: 0,
+            time_accumulator: 0.0,
+            grid_history: Vec::new(),
         }
     }
 
@@ -85,30 +95,79 @@ impl App {
         }
     }
 
-    // Handle mouse clicks on cells
+    // Handle mouse clicks on cells (only when paused)
     fn handle_cell_clicks(&mut self, ui: &egui::Ui) {
-        if let Some(pos) = ui.ctx().pointer_interact_pos() {
-            if ui.ui_contains_pointer() && ui.input(|i| i.pointer.primary_clicked()) {
-                // Use the position as-is (panel coordinates)
-                let (grid_x, grid_y) = self.camera.screen_to_grid(pos, self.cell_size);
-                let row = grid_y as usize;
-                let col = grid_x as usize;
+        if !self.is_playing
+            && let Some(pos) = ui.ctx().pointer_interact_pos()
+            && ui.ui_contains_pointer()
+            && ui.input(|i| i.pointer.primary_clicked())
+        {
+            // Use the position as-is (panel coordinates)
+            let (grid_x, grid_y) = self.camera.screen_to_grid(pos, self.cell_size);
+            let row = grid_y as usize;
+            let col = grid_x as usize;
 
-                self.game.toggle_cell(row, col);
-            }
+            self.game.toggle_cell(row, col);
         }
     }
 
     // Render the top control panel with buttons
-    fn render_controls(&mut self, ui: &mut egui::Ui) {
+    fn render_controls(&mut self, ui: &mut egui::Ui, screen_center: egui::Vec2) {
         ui.horizontal(|ui| {
-            if ui.button("Next Generation").clicked() {
-                self.game.next_generation();
+            // Play/Pause button (icon only)
+            let play_pause_icon = if self.is_playing { "⏸" } else { "▶" };
+            if ui.button(play_pause_icon).clicked() {
+                self.is_playing = !self.is_playing;
             }
 
             ui.separator();
 
-            ui.label(format!("Zoom: {:.1}x", self.camera.zoom));
+            // Previous generation button (only when paused)
+            ui.add_enabled_ui(!self.is_playing && self.generation_count > 0, |ui| {
+                if ui.button("◀").clicked()
+                    && let Some(prev_grid) = self.grid_history.pop()
+                {
+                    self.game.grid = prev_grid;
+                    self.generation_count -= 1;
+                }
+            });
+
+            // Next generation button (only when paused)
+            ui.add_enabled_ui(!self.is_playing, |ui| {
+                if ui.button("▶").clicked() {
+                    // Save current state to history (limit to 100 states)
+                    self.grid_history.push(self.game.grid.clone());
+                    if self.grid_history.len() > 100 {
+                        self.grid_history.remove(0);
+                    }
+
+                    self.game.next_generation();
+                    self.generation_count += 1;
+                }
+            });
+
+            ui.separator();
+
+            // Speed slider
+            ui.label("Speed:");
+            ui.add(egui::Slider::new(&mut self.speed, 1.0..=30.0).suffix(" gen/s"));
+
+            ui.separator();
+
+            // Zoom slider with center anchoring
+            ui.label("Zoom:");
+            let old_zoom = self.camera.zoom;
+            ui.add(egui::Slider::new(&mut self.camera.zoom, 0.1..=5.0).logarithmic(true));
+
+            // Adjust offset to keep screen center fixed when zooming
+            if old_zoom != self.camera.zoom {
+                // Calculate the world position of the screen center before zoom
+                let center_world_x = (screen_center.x - self.camera.offset.x) / old_zoom;
+                let center_world_y = (screen_center.y - self.camera.offset.y) / old_zoom;
+                // Recalculate offset to keep that world position at screen center
+                self.camera.offset.x = screen_center.x - center_world_x * self.camera.zoom;
+                self.camera.offset.y = screen_center.y - center_world_y * self.camera.zoom;
+            }
         });
     }
 
@@ -117,9 +176,10 @@ impl App {
         egui::Area::new(egui::Id::new("fps_display"))
             .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])
             .show(ctx, |ui| {
-                let fps = 1.0 / ctx.input(|i| i.stable_dt.max(0.001));
-                ui.allocate_ui(egui::vec2(120.0, 24.0), |ui| {
+                ui.allocate_ui(egui::vec2(180.0, 50.0), |ui| {
+                    let fps = 1.0 / ctx.input(|i| i.stable_dt.max(0.001));
                     ui.label(format!("{:.0} FPS", fps));
+                    ui.label(format!("Gen: {}", self.generation_count));
                 });
             });
     }
@@ -127,6 +187,37 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle automatic generation advancement when playing
+        if self.is_playing {
+            let dt = ctx.input(|i| i.stable_dt);
+            self.time_accumulator += dt;
+
+            let time_per_generation = 1.0 / self.speed;
+            // Limit to max 5 generations per frame to prevent freeze/crash
+            let mut generations_this_frame = 0;
+            const MAX_GENERATIONS_PER_FRAME: usize = 1;
+
+            while self.time_accumulator >= time_per_generation && generations_this_frame < MAX_GENERATIONS_PER_FRAME {
+                // Save current state to history (limit to 100 states)
+                self.grid_history.push(self.game.grid.clone());
+                if self.grid_history.len() > 100 {
+                    self.grid_history.remove(0);
+                }
+
+                self.game.next_generation();
+                self.generation_count += 1;
+                self.time_accumulator -= time_per_generation;
+                generations_this_frame += 1;
+            }
+
+            // Reset accumulator if we hit the limit to prevent endless catch-up
+            if generations_this_frame >= MAX_GENERATIONS_PER_FRAME {
+                self.time_accumulator = 0.0;
+            }
+
+            ctx.request_repaint();
+        }
+
         // Lazy rendering: only repaint when something changes
         let camera_changed = self.camera.offset != self.last_camera_offset
             || self.camera.zoom != self.last_camera_zoom;
@@ -141,8 +232,9 @@ impl eframe::App for App {
         self.render_stats(ctx);
 
         // Top panel for controls
+        let screen_center = egui::vec2(ctx.viewport_rect().width() / 2.0, ctx.viewport_rect().height() / 2.0);
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
-            self.render_controls(ui);
+            self.render_controls(ui, screen_center);
         });
 
         // Central panel for the game grid
@@ -151,6 +243,10 @@ impl eframe::App for App {
 
             // Handle panning
             self.camera.handle_pan(ui);
+
+            // Handle zoom with mouse wheel or trackpad pinch
+            let panel_center = ui.available_rect_before_wrap().center().to_vec2();
+            self.camera.handle_zoom(ui, panel_center);
 
             // Handle cell clicks
             self.handle_cell_clicks(ui);

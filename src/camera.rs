@@ -14,7 +14,7 @@ impl Camera {
         }
     }
 
-    // Handle mouse drag for panning
+    // Handle mouse drag and trackpad scroll for panning
     pub fn handle_pan(&mut self, ui: &egui::Ui) {
         let response = ui.interact(
             ui.max_rect(),
@@ -22,8 +22,33 @@ impl Camera {
             egui::Sense::drag(),
         );
 
+        // Mouse drag panning
         if response.dragged() {
             self.offset += response.drag_delta();
+        }
+
+        // Two-finger trackpad scroll panning
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        self.offset += scroll_delta;
+    }
+
+    // Handle zoom with mouse wheel or trackpad pinch
+    pub fn handle_zoom(&mut self, ui: &egui::Ui, screen_center: egui::Vec2) -> bool {
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+
+        if zoom_delta != 1.0 {
+            let old_zoom = self.zoom;
+            self.zoom = (self.zoom * zoom_delta).clamp(0.1, 5.0);
+
+            // Adjust offset to keep screen center fixed when zooming
+            let center_world_x = (screen_center.x - self.offset.x) / old_zoom;
+            let center_world_y = (screen_center.y - self.offset.y) / old_zoom;
+            self.offset.x = screen_center.x - center_world_x * self.zoom;
+            self.offset.y = screen_center.y - center_world_y * self.zoom;
+
+            true
+        } else {
+            false
         }
     }
 
