@@ -51,14 +51,15 @@ impl App {
 
     // Handle mouse clicks on cells
     fn handle_cell_clicks(&mut self, ui: &egui::Ui) {
-        if ui.input(|i| i.pointer.primary_clicked())
-            && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
-        {
-            let (grid_x, grid_y) = self.camera.screen_to_grid(pos, self.cell_size);
-            let row = grid_y as usize;
-            let col = grid_x as usize;
+        if let Some(pos) = ui.ctx().pointer_interact_pos() {
+            if ui.ui_contains_pointer() && ui.input(|i| i.pointer.primary_clicked()) {
+                // Use the position as-is (panel coordinates)
+                let (grid_x, grid_y) = self.camera.screen_to_grid(pos, self.cell_size);
+                let row = grid_y as usize;
+                let col = grid_x as usize;
 
-            self.game.toggle_cell(row, col);
+                self.game.toggle_cell(row, col);
+            }
         }
     }
 

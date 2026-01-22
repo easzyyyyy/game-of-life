@@ -29,9 +29,8 @@ impl Camera {
 
     // Transform a screen position to grid coordinates
     pub fn screen_to_grid(&self, screen_pos: egui::Pos2, cell_size: f32) -> (f32, f32) {
-        let adjusted_pos = screen_pos - self.offset;
-        let grid_x = adjusted_pos.x / (cell_size * self.zoom);
-        let grid_y = adjusted_pos.y / (cell_size * self.zoom);
+        let grid_x = (screen_pos.x - self.offset.x) / (cell_size * self.zoom);
+        let grid_y = (screen_pos.y - self.offset.y) / (cell_size * self.zoom);
         (grid_x, grid_y)
     }
 
